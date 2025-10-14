@@ -1,0 +1,15 @@
+[package]
+name = "realsense_interface"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+realsense-rust = "1.2.3"
+nalgebra = "0.32.3"
+kiss3d = "0.35.0"
+tobj = { version = "4.0.0", features = ["log"] }
+kdtree = "0.7.0"
+rand = "0.8.5"
+
+[build]
+rustflags = ["-L", "/opt/homebrew/lib"]
