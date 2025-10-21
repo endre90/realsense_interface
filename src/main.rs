@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::c_void;
 
-const MODEL_PATH: &str = "/home/endre/rust_crates/realsense_interface/box_780.obj";
+const MODEL_PATH: &str = "/home/endre/rust_crates/realsense_interface/objects/box_780.obj";
 const DEPTH_WIDTH: usize = 640;
 const DEPTH_HEIGHT: usize = 480;
 const FPS: i32 = 30;
@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let depth_scale = depth_sensor
         .get_option_range(Rs2Option::DepthUnits)
         .unwrap()
-        .default; 
+        .default;
 
     let inactive = InactivePipeline::try_from(&context)?;
     let mut cfg = Config::new();
@@ -227,11 +227,9 @@ fn simple_icp(
         return Isometry3::identity();
     }
 
-    let mut target_kdtree: KdTree<f64, usize, [f64; 3]> = KdTree::new(3);
+    let mut target_kdtree: KdTree<f32, usize, [f32; 3]> = KdTree::new(3);
     for (i, point) in target.iter().enumerate() {
-        target_kdtree
-            .add([point.x as f64, point.y as f64, point.z as f64], i)
-            .unwrap();
+        target_kdtree.add([point.x, point.y, point.z], i).unwrap();
     }
 
     let mut current_source = source.to_vec();
@@ -242,11 +240,7 @@ fn simple_icp(
             Vec::with_capacity(current_source.len());
         for s_point in &current_source {
             let nearest = target_kdtree
-                .nearest(
-                    &[s_point.x as f64, s_point.y as f64, s_point.z as f64],
-                    1,
-                    &squared_euclidean,
-                )
+                .nearest(&[s_point.x, s_point.y, s_point.z], 1, &squared_euclidean)
                 .unwrap();
             let nearest_idx = *nearest[0].1;
             let t_point = target[nearest_idx];
@@ -299,7 +293,7 @@ fn simple_icp(
         let change = iteration_transform.translation.vector.norm()
             + (iteration_transform.rotation.angle() / std::f32::consts::PI);
         if i > 0 && change < tolerance {
-            println!("ICP converged after {} iterations.", i);
+            // println!("ICP converged after {} iterations.", i);
             break;
         }
     }
