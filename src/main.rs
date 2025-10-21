@@ -31,9 +31,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let template_pcd = load_model_pcd(MODEL_PATH, 0.005)?;
     println!("Loaded {} points from model.", template_pcd.len());
 
+    println!("1");
+
     let context = Context::new()?;
+    println!("1a");
     let devices = context.query_devices(std::collections::HashSet::new());
+    println!("1b");
     let device = devices.into_iter().next().expect("No device found");
+
+    println!("2");
 
     let depth_sensor = device
         .sensors()
@@ -41,10 +47,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         .find(|s| s.extension() == Rs2Extension::DepthSensor)
         .expect("No depth sensor found");
 
+    println!("3");
+
     let depth_scale = depth_sensor
         .get_option_range(Rs2Option::DepthUnits)
         .unwrap()
         .default; // f32
+
+    println!("4");
 
     // Create pipeline config and enable streams
     let inactive = InactivePipeline::try_from(&context)?;
@@ -57,6 +67,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         Rs2Format::Z16,
         FPS as usize,
     )?;
+
+    println!("5");
     cfg.enable_stream(
         Rs2StreamKind::Color,
         None,
@@ -66,9 +78,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         FPS as usize,
     )?;
 
+    println!("6");
+
     // start pipeline (shadow inactive -> active)
     let mut pipeline = inactive.start(Some(cfg))?;
     let profile = pipeline.profile();
+
+    println!("7");
 
     let stream_profile = profile
         .streams()
