@@ -14,37 +14,29 @@ use realsense_rust::{
     pipeline::InactivePipeline,
 };
 
+// use realsense_rust::frame::
 use realsense_rust::kind::{Rs2Extension, Rs2Option};
 
 use std::collections::HashMap;
 use std::error::Error;
-use std::f32;
 use std::ffi::c_void;
 
-// const MODEL_PATH: &str = "/home/endre/rust_crates/realsense_interface/objects/box_780.obj";
-const DEPTH_WIDTH: usize = 1280;
-const DEPTH_HEIGHT: usize = 720;
+const MODEL_PATH: &str = "/home/endre/rust_crates/realsense_interface/box_780.obj";
+const DEPTH_WIDTH: usize = 640;
+const DEPTH_HEIGHT: usize = 480;
 const FPS: i32 = 30;
-const RMSE_THRESHOLD: f32 = 0.02;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // example box (realsense package)
-    let box_w = 0.144;
-    let box_h = 0.090;
-    let box_d = 0.050;
-    let sampling_density = 0.002;
-
-    let template_pcd = create_test_box_pcd(box_w, box_h, box_d, sampling_density);
-    println!("Loaded {} points from model.", template_pcd.len());
-
-    // actual 3d object
-    // println!("Loading CAD model from {}...", MODEL_PATH);
-    // let template_pcd = load_model_pcd(MODEL_PATH, 0.005)?;
-    // println!("Loaded {} points from model.", template_pcd.len());
-
+    println!("Loading CAD model from {}...", MODEL_PATH);
+    let template_pcd = load_model_pcd(MODEL_PATH, 0.005)?;
+    println!("Loaded {} points from model.", template_pcd.len())
     let context = Context::new()?;
+    println!("1a");
     let devices = context.query_devices(std::collections::HashSet::new());
+    println!("1b");
     let device = devices.into_iter().next().expect("No device found");
+
+    println!("2");
 
     let depth_sensor = device
         .sensors()
@@ -52,11 +44,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         .find(|s| s.extension() == Rs2Extension::DepthSensor)
         .expect("No depth sensor found");
 
+    println!("3");
+
     let depth_scale = depth_sensor
         .get_option_range(Rs2Option::DepthUnits)
         .unwrap()
-        .default;
+        .default; // f32
 
+    println!("4");
+
+    // Create pipeline config and enable streams
     let inactive = InactivePipeline::try_from(&context)?;
     let mut cfg = Config::new();
     cfg.enable_stream(
@@ -68,6 +65,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         FPS as usize,
     )?;
 
+    println!("5");
     cfg.enable_stream(
         Rs2StreamKind::Color,
         None,
@@ -77,8 +75,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         FPS as usize,
     )?;
 
+    println!("6");
+
+    // start pipeline (shadow inactive -> active)
     let mut pipeline = inactive.start(Some(cfg))?;
     let profile = pipeline.profile();
+
+    println!("7");
 
     let stream_profile = profile
         .streams()
@@ -86,12 +89,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         .find(|s| s.kind() == Rs2StreamKind::Depth)
         .expect("Depth stream not found in profile");
 
-    let intrinsics: Rs2Intrinsics = stream_profile.intrinsics()?;
+    println!("8");
+    let intrinsics: Rs2Intrinsics = stream_profile.intrinsics()?; // get intrinsics
 
-    let mut window = Window::new("RealSense PCD based pose estimation");
+    println!("9");
+    let mut window = Window::new("RealSense Box Finder");
+    println!("10");
     window.set_light(Light::StickToCamera);
-    window.set_point_size(3.0); // This may be ignored by the driver
 
+    println!("11");
     while window.render() {
         let frames = match pipeline.wait(None) {
             Ok(f) => f,
@@ -101,10 +107,24 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         };
 
+        // let mut depth_frame_opt: Option<DepthFrame> = None;
+        // let mut color_frame_opt: Option<ColorFrame> = None;
+
         let depth_frame_opt: Option<DepthFrame> =
             frames.frames_of_type::<DepthFrame>().into_iter().next();
         let color_frame_opt: Option<ColorFrame> =
             frames.frames_of_type::<ColorFrame>().into_iter().next();
+
+        // let depth_frames: Vec<DepthFrame> = frames.frames_of_type();
+        // let color_frames: Vec<ColorFrame> = frames.frames_of_type();
+
+        // if depth_frames.len() != 0 {
+        //     depth_frame_opt = Some(&depth_frames[0])
+        // }
+
+        // if color_frames.len() != 0 {
+        //     color_frame_opt = Some(color_frames[0])
+        // }
 
         if let (Some(depth_frame), Some(color_frame)) = (depth_frame_opt, color_frame_opt) {
             let (scene_pcd, scene_colors) =
@@ -120,50 +140,21 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .collect();
 
             let mut final_pose = Isometry3::identity();
-            let mut rmse = f32::INFINITY;
-
             if segmented_pcd.len() > 100 {
                 segmented_pcd = downsample_pcd(&segmented_pcd, 0.01);
-
-                let (pose, error) = simple_icp(&template_pcd, &segmented_pcd, 20, 0.005);
-                final_pose = pose;
-                rmse = error;
+                final_pose = simple_icp(&template_pcd, &segmented_pcd, 20, 0.005);
             }
 
-            let box_detected = rmse < RMSE_THRESHOLD;
-
-            if box_detected {
-                let translation = final_pose.translation.vector;
-                let euler_angles = final_pose.rotation.euler_angles();
-
-                println!("--- Box DETECTED! (RMSE: {:.5}) ---", rmse);
-                println!(
-                    "  Location (X, Y, Z):   {:.3}m, {:.3}m, {:.3}m",
-                    translation.x, translation.y, translation.z
-                );
-                println!(
-                    "  Rotation (Roll, Pitch, Yaw): {:.3}, {:.3}, {:.3}",
-                    euler_angles.0, euler_angles.1, euler_angles.2
-                );
-            }
-
+            // draw: scene colors, segmented in blue, template (transformed) in green
             for (point, color) in scene_pcd.iter().zip(scene_colors.iter()) {
                 window.draw_point(point, color);
             }
-
             for point in &segmented_pcd {
                 window.draw_point(point, &Point3::new(0.0, 0.0, 1.0));
             }
-
-            let model_color = if box_detected {
-                Point3::new(0.0, 1.0, 0.0)
-            } else {
-                Point3::new(1.0, 0.0, 0.0)
-            };
-
             for point in &template_pcd {
                 let transformed_point = final_pose * point;
-                window.draw_point(&transformed_point, &model_color);
+                window.draw_point(&transformed_point, &Point3::new(0.0, 1.0, 0.0));
             }
         }
     }
@@ -197,16 +188,19 @@ fn create_scene_pcd(
     let mut pcd = Vec::new();
     let mut colors = Vec::new();
 
+    // SAFER: convert dimensions to usize explicitly
     let d_w = depth_frame.width();
     let d_h = depth_frame.height();
     let c_w = color_frame.width();
     let c_h = color_frame.height();
 
+    // depth data: pointer cast to u16 slice (Z16)
     let depth_data: &[u16] = unsafe {
         let ptr = depth_frame.get_data() as *const c_void as *const u16;
         std::slice::from_raw_parts(ptr, d_w * d_h)
     };
 
+    // color data: pointer cast to u8 slice (RGB8)
     let color_data: &[u8] = unsafe {
         let ptr = color_frame.get_data() as *const c_void as *const u8;
         std::slice::from_raw_parts(ptr, c_w * c_h * 3)
@@ -225,6 +219,7 @@ fn create_scene_pcd(
                 pcd.push(Point3::new(point_x, point_y, depth_m));
 
                 let color_idx = (y * c_w + x) * 3;
+                // guard against out-of-bounds in case color & depth sizes differ slightly
                 if color_idx + 2 < color_data.len() {
                     let r = color_data[color_idx] as f32 / 255.0;
                     let g = color_data[color_idx + 1] as f32 / 255.0;
@@ -239,6 +234,7 @@ fn create_scene_pcd(
     (pcd, colors)
 }
 
+/// Voxel grid downsample that averages points inside each voxel (more stable than taking the last point).
 fn downsample_pcd(pcd: &[Point3<f32>], voxel_size: f32) -> Vec<Point3<f32>> {
     let mut voxel_sum: HashMap<(i32, i32, i32), (Vector3<f32>, usize)> = HashMap::new();
     for point in pcd {
@@ -264,31 +260,40 @@ fn simple_icp(
     target: &[Point3<f32>],
     max_iterations: usize,
     tolerance: f32,
-) -> (Isometry3<f32>, f32) {
+) -> Isometry3<f32> {
     if source.is_empty() || target.is_empty() {
-        return (Isometry3::identity(), f32::INFINITY);
+        return Isometry3::identity();
     }
 
-    let mut target_kdtree: KdTree<f32, usize, [f32; 3]> = KdTree::new(3);
+    // Use an explicit KdTree typed for f64 points to avoid inference issues
+    let mut target_kdtree: KdTree<f64, usize, [f64; 3]> = KdTree::new(3);
     for (i, point) in target.iter().enumerate() {
-        target_kdtree.add([point.x, point.y, point.z], i).unwrap();
+        target_kdtree
+            .add([point.x as f64, point.y as f64, point.z as f64], i)
+            .unwrap();
     }
 
     let mut current_source = source.to_vec();
     let mut total_transform = Isometry3::identity();
 
     for i in 0..max_iterations {
+        // find correspondences
         let mut correspondences: Vec<(Point3<f32>, Point3<f32>)> =
             Vec::with_capacity(current_source.len());
         for s_point in &current_source {
             let nearest = target_kdtree
-                .nearest(&[s_point.x, s_point.y, s_point.z], 1, &squared_euclidean)
+                .nearest(
+                    &[s_point.x as f64, s_point.y as f64, s_point.z as f64],
+                    1,
+                    &squared_euclidean,
+                )
                 .unwrap();
             let nearest_idx = *nearest[0].1;
             let t_point = target[nearest_idx];
             correspondences.push((*s_point, t_point));
         }
 
+        // compute centroids
         let n = correspondences.len() as f32;
         let sum_s = correspondences
             .iter()
@@ -301,6 +306,7 @@ fn simple_icp(
         let source_centroid = sum_s / n;
         let target_centroid = sum_t / n;
 
+        // compute cross-covariance H
         let mut h = Matrix3::zeros();
         for (s, t) in &correspondences {
             let s_centered = s.coords - source_centroid;
@@ -313,8 +319,11 @@ fn simple_icp(
         let v_t = svd.v_t.unwrap();
         let mut r = v_t.transpose() * u.transpose();
 
+        // ensure proper rotation (determinant = +1)
         if r.determinant() < 0.0 {
+            // flip last column of v (equiv to flipping last row of v_t)
             let mut v_t_corrected = v_t.clone();
+            // flip the third row of v_t (index 2)
             {
                 let mut row = v_t_corrected.row_mut(2);
                 row.scale_mut(-1.0);
@@ -326,120 +335,22 @@ fn simple_icp(
         let iteration_transform =
             Isometry3::from_parts(Translation3::from(t_vec), UnitQuaternion::from_matrix(&r));
 
+        // apply iteration transform to current_source
         for s_point in &mut current_source {
             *s_point = iteration_transform * *s_point;
         }
 
+        // accumulate transform (new * old)
         total_transform = iteration_transform * total_transform;
 
+        // measure change: translation norm + normalized rotation angle
         let change = iteration_transform.translation.vector.norm()
             + (iteration_transform.rotation.angle() / std::f32::consts::PI);
         if i > 0 && change < tolerance {
+            println!("ICP converged after {} iterations.", i);
             break;
         }
     }
 
-    let mut total_squared_error = 0.0;
-    for s_point in &current_source {
-        let nearest = target_kdtree
-            .nearest(&[s_point.x, s_point.y, s_point.z], 1, &squared_euclidean)
-            .unwrap();
-
-        total_squared_error += nearest[0].0;
-    }
-
-    let mse = total_squared_error / (current_source.len() as f32);
-    let rmse = mse.sqrt();
-
-    (total_transform, rmse)
-}
-
-fn add_face_points<F>(
-    pcd: &mut Vec<Point3<f32>>,
-    min_u: f32,
-    max_u: f32,
-    min_v: f32,
-    max_v: f32,
-    density: f32,
-    construct_point: F,
-) where
-    F: Fn(f32, f32) -> Point3<f32>,
-{
-    let mut u = min_u;
-    while u <= max_u {
-        let mut v = min_v;
-        while v <= max_v {
-            pcd.push(construct_point(u, v));
-            v += density;
-        }
-        u += density;
-    }
-}
-
-fn create_test_box_pcd(width: f32, height: f32, depth: f32, density: f32) -> Vec<Point3<f32>> {
-    let mut pcd = Vec::new();
-    let half_w = width / 2.0;
-    let half_h = height / 2.0;
-    let half_d = depth / 2.0;
-
-    add_face_points(
-        &mut pcd,
-        -half_w,
-        half_w,
-        -half_h,
-        half_h,
-        density,
-        |u, v| Point3::new(u, v, half_d),
-    );
-    add_face_points(
-        &mut pcd,
-        -half_w,
-        half_w,
-        -half_h,
-        half_h,
-        density,
-        |u, v| Point3::new(u, v, -half_d),
-    );
-
-    // Right (+X) and Left (-X) faces
-    add_face_points(
-        &mut pcd,
-        -half_d,
-        half_d,
-        -half_h,
-        half_h,
-        density,
-        |u, v| Point3::new(half_w, v, u),
-    );
-    add_face_points(
-        &mut pcd,
-        -half_d,
-        half_d,
-        -half_h,
-        half_h,
-        density,
-        |u, v| Point3::new(-half_w, v, u),
-    );
-
-    // Top (+Y) and Bottom (-Y) faces
-    add_face_points(
-        &mut pcd,
-        -half_w,
-        half_w,
-        -half_d,
-        half_d,
-        density,
-        |u, v| Point3::new(u, half_h, v),
-    );
-    add_face_points(
-        &mut pcd,
-        -half_w,
-        half_w,
-        -half_d,
-        half_d,
-        density,
-        |u, v| Point3::new(u, -half_h, v),
-    );
-
-    pcd
+    total_transform
 }
